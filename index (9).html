@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trayectoria — seguimiento de parábola</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14181C;
+    --panel:#1B2127;
+    --panel-2:#20262D;
+    --border:rgba(255,255,255,0.08);
+    --grid:rgba(255,255,255,0.045);
+    --text:#EDEFF2;
+    --text-muted:#8A94A0;
+    --bird:#E8402C;
+    --bird-dim:rgba(232,64,44,0.35);
+    --curve:#5EEAD4;
+    --curve-dim:rgba(94,234,212,0.25);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0/32px 32px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0/32px 32px,
+      var(--bg);
+    color:var(--text);
+    font-family:'Inter', system-ui, sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  header{
+    padding:22px clamp(16px,4vw,40px) 8px;
+    display:flex;
+    align-items:baseline;
+    gap:14px;
+    flex-wrap:wrap;
+  }
+  header h1{
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:700;
+    font-size:clamp(22px,3vw,28px);
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  header h1 span{color:var(--bird);}
+  header p{
+    margin:0;
+    color:var(--text-muted);
+    font-size:14px;
+  }
+
+  main{
+    display:grid;
+    grid-template-columns:1.6fr 1fr;
+    gap:20px;
+    padding:14px clamp(16px,4vw,40px) 40px;
+    align-items:start;
+  }
+  @media (max-width: 880px){
+    main{grid-template-columns:1fr;}
+  }
+
+  .stage{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    overflow:hidden;
+    position:relative;
+  }
+  .stage-inner{
+    position:relative;
+    width:100%;
+    background:#0B0E11;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:220px;
+  }
+  canvas#displayCanvas{
+    width:100%;
+    height:auto;
+    display:block;
+    cursor:crosshair;
+    touch-action:manipulation;
+  }
+  .empty-state{
+    position:absolute;
+    inset:0;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    color:var(--text-muted);
+    text-align:center;
+    padding:24px;
+  }
+  .empty-state svg{opacity:0.5;}
+  .empty-state strong{color:var(--text); font-weight:600; font-size:15px;}
+  .empty-state span{font-size:13px; max-width:280px;}
+
+  .color-hint{
+    position:absolute;
+    left:50%;
+    bottom:14px;
+    transform:translateX(-50%);
+    background:rgba(11,14,17,0.85);
+    border:1px solid var(--border);
+    color:var(--text);
+    font-size:12.5px;
+    font-weight:500;
+    padding:9px 14px;
+    border-radius:20px;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity 0.25s ease;
+    white-space:nowrap;
+    max-width:88%;
+    text-align:center;
+  }
+  .color-hint.show{opacity:1;}
+
+  .color-picker-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+  }
+  .swatch{
+    width:38px;
+    height:38px;
+    border-radius:10px;
+    border:2px solid var(--border);
+    background:var(--panel-2);
+    flex-shrink:0;
+  }
+  .color-picker-text{display:flex; flex-direction:column; gap:2px;}
+  .color-picker-sub{
+    font-size:12px;
+    color:var(--text-muted);
+    font-family:'JetBrains Mono', monospace;
+  }
+
+  .refsys{display:flex; flex-direction:column; gap:10px;}
+  .refsys-status{
+    font-size:12px;
+    color:var(--text-muted);
+    line-height:1.45;
+  }
+  .calib-distance-row{
+    display:none;
+    gap:8px;
+  }
+  .calib-distance-row.show{display:flex;}
+  .calib-distance-row input{
+    flex:1;
+    min-width:0;
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:10px 12px;
+    color:var(--text);
+    font-family:'JetBrains Mono', monospace;
+    font-size:13px;
+  }
+  .calib-distance-row input:focus{outline:none; border-color:var(--curve);}
+  .calib-distance-row .btn{padding:10px 16px; font-size:13px;}
+
+  .stage-footer{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:12px 16px;
+    border-top:1px solid var(--border);
+    flex-wrap:wrap;
+  }
+  .progress-track{
+    flex:1;
+    height:4px;
+    background:var(--panel-2);
+    border-radius:2px;
+    overflow:hidden;
+    min-width:80px;
+  }
+  .progress-fill{
+    height:100%;
+    width:0%;
+    background:var(--curve);
+    transition:width 0.08s linear;
+  }
+  .stage-status{
+    font-size:12.5px;
+    color:var(--text-muted);
+    white-space:nowrap;
+  }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:18px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+
+  .field-label{
+    font-size:12.5px;
+    color:var(--text-muted);
+    font-weight:500;
+    display:flex;
+    justify-content:space-between;
+  }
+
+  input[type="file"]{display:none;}
+  .btn{
+    appearance:none;
+    border:none;
+    border-radius:10px;
+    padding:13px 16px;
+    font-family:'Inter', sans-serif;
+    font-weight:600;
+    font-size:14.5px;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    transition:transform 0.12s ease, filter 0.12s ease, opacity 0.12s ease;
+  }
+  .btn:active{transform:scale(0.98);}
+  .btn:disabled{opacity:0.4; cursor:not-allowed;}
+  .btn-primary{background:var(--bird); color:#fff;}
+  .btn-primary:not(:disabled):hover{filter:brightness(1.08);}
+  .btn-secondary{background:var(--panel-2); color:var(--text); border:1px solid var(--border);}
+  .btn-secondary:not(:disabled):hover{filter:brightness(1.15);}
+  .btn-ghost{background:transparent; color:var(--text-muted); padding:8px 4px; font-weight:500; font-size:13px;}
+  .btn-ghost:hover{color:var(--text);}
+
+  .row{display:flex; gap:10px;}
+  .row .btn{flex:1;}
+
+  input[type="range"]{
+    width:100%;
+    accent-color:var(--curve);
+    height:20px;
+  }
+
+  .divider{height:1px; background:var(--border); margin:2px 0;}
+
+  .results{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .equation-box{
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:16px;
+    text-align:center;
+  }
+  .equation-box .eq{
+    font-family:'JetBrains Mono', monospace;
+    font-size:clamp(16px,2.2vw,20px);
+    font-weight:500;
+    color:var(--curve);
+    letter-spacing:-0.01em;
+    opacity:0;
+    transform:translateY(4px);
+    transition:opacity 0.5s ease, transform 0.5s ease;
+  }
+  .equation-box .eq.show{opacity:1; transform:translateY(0);}
+  .equation-box .eq-label{
+    font-size:11.5px;
+    color:var(--text-muted);
+    margin-bottom:8px;
+    text-transform:none;
+  }
+  .equation-box .eq-note{
+    font-size:11px;
+    color:var(--text-muted);
+    margin-top:8px;
+    opacity:0;
+    transition:opacity 0.5s ease;
+  }
+  .equation-box .eq-note.show{opacity:1;}
+
+  .stats-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:10px;
+  }
+  .stat{
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:10px 12px;
+  }
+  .stat .k{font-size:11px; color:var(--text-muted); margin-bottom:3px;}
+  .stat .v{font-family:'JetBrains Mono', monospace; font-size:14px; font-weight:500;}
+
+  details{
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:2px 14px;
+  }
+  details summary{
+    cursor:pointer;
+    padding:10px 0;
+    font-size:13.5px;
+    font-weight:500;
+    color:var(--text);
+    list-style:none;
+  }
+  details summary::-webkit-details-marker{display:none;}
+  details summary::before{content:"+ "; color:var(--curve);}
+  details[open] summary::before{content:"– ";}
+  details p{
+    margin:0 0 12px;
+    font-size:13px;
+    line-height:1.55;
+    color:var(--text-muted);
+  }
+
+  footer{
+    text-align:center;
+    padding:10px 16px 30px;
+    color:var(--text-muted);
+    font-size:12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Trayectoria<span>.</span></h1>
+  <p>Subí un video del tiro y obtené la función cuadrática de la parábola</p>
+</header>
+
+<main>
+  <div class="stage">
+    <div class="stage-inner" id="stageInner">
+      <canvas id="displayCanvas"></canvas>
+      <div class="empty-state" id="emptyState">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 17 Q12 3 20 17" /><circle cx="4" cy="17" r="1.4" fill="currentColor" stroke="none"/><circle cx="20" cy="17" r="1.4" fill="currentColor" stroke="none"/></svg>
+        <strong>Todavía no hay video</strong>
+        <span>Subí una grabación del tiro contra un fondo de color parejo, con buena luz.</span>
+      </div>
+      <div class="color-hint" id="colorHint">Tocá el proyectil en la imagen para indicar su color</div>
+    </div>
+    <div class="stage-footer">
+      <span class="stage-status" id="statusText">Esperando video</span>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div>
+      <label class="btn btn-primary" style="width:100%;" for="fileInput">Subir video</label>
+      <input type="file" id="fileInput" accept="video/*" capture="environment">
+    </div>
+
+    <div class="row">
+      <button class="btn btn-secondary" id="trackBtn" disabled>Iniciar seguimiento</button>
+      <button class="btn btn-secondary" id="resetBtn" disabled>Reiniciar</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="color-picker-row">
+      <div class="swatch" id="colorSwatch"></div>
+      <div class="color-picker-text">
+        <div class="field-label" style="margin-bottom:2px;"><span>Color del proyectil</span></div>
+        <span class="color-picker-sub" id="colorPickerSub">Sin elegir — tocá el objeto en la imagen</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="field-label"><span>Tolerancia de color</span><span id="sensVal">Media</span></div>
+      <input type="range" id="sensSlider" min="1" max="10" value="5">
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="refsys">
+      <div class="field-label"><span>Sistema de referencia</span></div>
+      <div class="row">
+        <button class="btn btn-secondary" id="calibScaleBtn" disabled>Calibrar escala</button>
+        <button class="btn btn-secondary" id="calibOriginBtn" disabled>Marcar origen</button>
+      </div>
+      <div class="refsys-status" id="refsysStatus">Sin calibrar: usa el cuadro como 100×100cm y el borde inferior como altura 0</div>
+      <div class="calib-distance-row" id="calibDistanceRow">
+        <input type="number" id="calibDistanceInput" placeholder="Distancia real entre los puntos (cm)" inputmode="decimal" step="any" min="0">
+        <button class="btn btn-primary" id="calibDistanceConfirm">Confirmar</button>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="results">
+      <div class="equation-box">
+        <div class="eq-label">Altura en función del tiempo</div>
+        <div class="eq" id="eqText">h = at² + bt + c</div>
+        <div class="eq-note">t en segundos, h en centímetros (área grabada: 100×100 cm)</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="k">Puntos detectados</div><div class="v" id="statPoints">—</div></div>
+        <div class="stat"><div class="k">Ajuste (R²)</div><div class="v" id="statR2">—</div></div>
+        <div class="stat"><div class="k">Altura máxima</div><div class="v" id="statVertex">—</div></div>
+        <div class="stat"><div class="k">a (gravedad, fija)</div><div class="v" id="statA">—</div></div>
+      </div>
+      <button class="btn btn-secondary" id="downloadBtn" disabled>Descargar imagen</button>
+    </div>
+
+    <details>
+      <summary>¿Cómo funciona?</summary>
+      <p>El programa recorre el video cuadro por cuadro y busca los píxeles parecidos al color que elegiste tocando el proyectil. En vez de promediar todos esos píxeles (algo del fondo con un tono parecido podría arrastrar el resultado), busca el grupo de píxeles conectados más grande — así se queda con el objeto real y descarta manchas sueltas. Con el centro de ese grupo arma una nube de puntos, con la altura real (en cm, usando que el área grabada mide 100×100cm) y el instante de video en que se detectó cada uno. A esos datos se les ajusta h = at² + bt + c, pero con "a" fijo en -9,81 (la aceleración de la gravedad) en vez de calcularlo: solo b (la velocidad inicial) y c (la altura inicial) salen del ajuste por cuadrados mínimos. La curva que se dibuja sobre el video usa además una regresión lineal de la posición horizontal en función del tiempo (velocidad horizontal constante), solo para poder trazarla sobre la imagen real.</p>
+    </details>
+  </div>
+</main>
+
+<footer>Todo el procesamiento se hace en el navegador — el video no se sube a ningún servidor.</footer>
+
+<script>
+(() => {
+  const fileInput = document.getElementById('fileInput');
+  const trackBtn = document.getElementById('trackBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const sensSlider = document.getElementById('sensSlider');
+  const sensVal = document.getElementById('sensVal');
+  const displayCanvas = document.getElementById('displayCanvas');
+  const emptyState = document.getElementById('emptyState');
+  const statusText = document.getElementById('statusText');
+  const progressFill = document.getElementById('progressFill');
+  const eqText = document.getElementById('eqText');
+  const eqNote = document.querySelector('.eq-note');
+  const statPoints = document.getElementById('statPoints');
+  const statR2 = document.getElementById('statR2');
+  const statVertex = document.getElementById('statVertex');
+  const statA = document.getElementById('statA');
+  const colorHint = document.getElementById('colorHint');
+  const colorSwatch = document.getElementById('colorSwatch');
+  const colorPickerSub = document.getElementById('colorPickerSub');
+  const calibScaleBtn = document.getElementById('calibScaleBtn');
+  const calibOriginBtn = document.getElementById('calibOriginBtn');
+  const refsysStatus = document.getElementById('refsysStatus');
+  const calibDistanceRow = document.getElementById('calibDistanceRow');
+  const calibDistanceInput = document.getElementById('calibDistanceInput');
+  const calibDistanceConfirm = document.getElementById('calibDistanceConfirm');
+
+  const dctx = displayCanvas.getContext('2d');
+
+  // Offscreen analysis canvas (small, for speed)
+  const ANALYSIS_W = 220;
+  let analysisH = 124;
+  const acanvas = document.createElement('canvas');
+  const actx = acanvas.getContext('2d', { willReadFrequently: true });
+
+  const video = document.createElement('video');
+  video.playsInline = true;
+  video.muted = true;
+
+  let points = []; // {x, yPixel, yMath}
+  let tracking = false;
+  let baseFrame = null; // ImageBitmap-ish snapshot to draw as background once done
+  let fitResult = null;
+  let horizontalFit = { vx: 0, x0: 0 }; // x(t) = x0 + vx*t, para volver a dibujar la curva
+  let curveT0 = 0;
+  let curveTs = [];
+
+  // Calibración a centímetros reales: el área grabada mide 100cm x 100cm,
+  // así que el ancho del video equivale a 100cm y el alto también a 100cm
+  // (cada eje puede tener su propia escala de píxeles-por-cm si el video
+  // no es cuadrado).
+  const AREA_CM = 100;
+  let pxPerCmX = 1, pxPerCmY = 1; // se calculan al cargar el video (valor por defecto)
+  let targetColor = null; // {r,g,b} elegido tocando el proyectil
+
+  // Sistema de referencia definido por el usuario (opcional). Si no se
+  // define, se usa el valor por defecto de arriba (área = 100x100cm y
+  // origen en el borde inferior del cuadro).
+  let pxPerCm = null;      // escala calibrada a mano (píxeles por cm), isotrópica
+  let originPx = null;     // {x, y} en píxeles: el punto que el usuario marcó como (0,0)
+  let calibP1 = null, calibP2 = null; // puntos tocados durante la calibración de escala
+  let colorPickPx = null;  // último punto tocado para elegir color (para redibujar el marcador)
+  let clickMode = 'color'; // 'color' | 'calib1' | 'calib2' | 'origin'
+  const DEFAULT_COLOR_HINT = 'Tocá el proyectil en la imagen para indicar su color';
+
+  function currentPxPerCmX(){ return pxPerCm || pxPerCmX; }
+  function currentPxPerCmY(){ return pxPerCm || pxPerCmY; }
+  function currentOriginPxX(){ return originPx ? originPx.x : 0; }
+  function currentOriginPxY(){ return originPx ? originPx.y : displayCanvas.height; }
+
+  const sensLabels = {1:'Muy baja',2:'Baja',3:'Baja',4:'Media-baja',5:'Media',6:'Media',7:'Media-alta',8:'Alta',9:'Alta',10:'Muy alta'};
+  sensSlider.addEventListener('input', () => {
+    sensVal.textContent = sensLabels[sensSlider.value];
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    resetState(false);
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.onloadedmetadata = () => {
+      displayCanvas.width = video.videoWidth;
+      displayCanvas.height = video.videoHeight;
+      pxPerCmX = video.videoWidth / AREA_CM;
+      pxPerCmY = video.videoHeight / AREA_CM;
+      analysisH = Math.round(ANALYSIS_W * (video.videoHeight / video.videoWidth));
+      acanvas.width = ANALYSIS_W;
+      acanvas.height = analysisH;
+      emptyState.style.display = 'none';
+      video.currentTime = 0;
+    };
+    video.addEventListener('seeked', () => {
+      drawVideoFrame();
+      resetBtn.disabled = false;
+      calibScaleBtn.disabled = false;
+      calibOriginBtn.disabled = false;
+      targetColor = null;
+      pxPerCm = null;
+      originPx = null;
+      calibP1 = null;
+      calibP2 = null;
+      colorPickPx = null;
+      clickMode = 'color';
+      updateColorUI();
+      updateRefsysStatus();
+      statusText.textContent = 'Tocá el proyectil para elegir su color';
+      colorHint.textContent = DEFAULT_COLOR_HINT;
+      colorHint.classList.add('show');
+    }, { once: true });
+  });
+
+  function canvasCoordsFromEvent(evt){
+    const rect = displayCanvas.getBoundingClientRect();
+    const scaleX = displayCanvas.width / rect.width;
+    const scaleY = displayCanvas.height / rect.height;
+    const point = (evt.touches && evt.touches[0]) ? evt.touches[0] : evt;
+    return {
+      x: Math.round((point.clientX - rect.left) * scaleX),
+      y: Math.round((point.clientY - rect.top) * scaleY)
+    };
+  }
+
+  function pickColorAt(px, py){
+    if (!displayCanvas.width) return;
+    const size = 5; // muestrea un cuadradito chico para evitar ruido de un solo píxel
+    const half = Math.floor(size / 2);
+    const sx = Math.max(0, Math.min(displayCanvas.width - size, px - half));
+    const sy = Math.max(0, Math.min(displayCanvas.height - size, py - half));
+    const data = dctx.getImageData(sx, sy, size, size).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < data.length; i += 4){
+      r += data[i]; g += data[i+1]; b += data[i+2]; n++;
+    }
+    targetColor = { r: Math.round(r/n), g: Math.round(g/n), b: Math.round(b/n) };
+    colorPickPx = { x: px, y: py };
+    updateColorUI();
+    redrawOverlays();
+    statusText.textContent = 'Color elegido — listo para rastrear';
+    colorHint.classList.remove('show');
+    trackBtn.disabled = false;
+  }
+
+  function drawMarker(px, py, color){
+    dctx.save();
+    dctx.strokeStyle = color;
+    dctx.lineWidth = Math.max(1.5, displayCanvas.width * 0.0015);
+    dctx.beginPath();
+    dctx.arc(px, py, Math.max(5, displayCanvas.width * 0.008), 0, Math.PI*2);
+    dctx.stroke();
+    dctx.restore();
+  }
+
+  function drawCross(px, py, color){
+    dctx.save();
+    dctx.strokeStyle = color;
+    dctx.lineWidth = Math.max(1.5, displayCanvas.width * 0.0018);
+    const s = Math.max(8, displayCanvas.width * 0.012);
+    dctx.beginPath();
+    dctx.moveTo(px - s, py); dctx.lineTo(px + s, py);
+    dctx.moveTo(px, py - s); dctx.lineTo(px, py + s);
+    dctx.stroke();
+    dctx.beginPath();
+    dctx.arc(px, py, s * 0.5, 0, Math.PI*2);
+    dctx.stroke();
+    dctx.restore();
+  }
+
+  function drawCalibLine(p1, p2, color){
+    dctx.save();
+    dctx.strokeStyle = color;
+    dctx.lineWidth = Math.max(1.5, displayCanvas.width * 0.0015);
+    dctx.setLineDash([6, 6]);
+    dctx.beginPath();
+    dctx.moveTo(p1.x, p1.y);
+    dctx.lineTo(p2.x, p2.y);
+    dctx.stroke();
+    dctx.restore();
+  }
+
+  // Redibuja el cuadro y todos los marcadores encima (color, calibración,
+  // origen), ya que dibujar un frame nuevo borra todo el canvas.
+  function redrawOverlays(){
+    drawVideoFrame();
+    if (colorPickPx) drawMarker(colorPickPx.x, colorPickPx.y, '#ffffff');
+    if (calibP1 && calibP2) drawCalibLine(calibP1, calibP2, '#5EEAD4');
+    if (calibP1) drawMarker(calibP1.x, calibP1.y, '#5EEAD4');
+    if (calibP2) drawMarker(calibP2.x, calibP2.y, '#5EEAD4');
+    if (originPx) drawCross(originPx.x, originPx.y, '#E8402C');
+  }
+
+  function updateColorUI(){
+    if (targetColor){
+      colorSwatch.style.background = `rgb(${targetColor.r},${targetColor.g},${targetColor.b})`;
+      colorPickerSub.textContent = `rgb(${targetColor.r}, ${targetColor.g}, ${targetColor.b})`;
+    } else {
+      colorSwatch.style.background = '';
+      colorPickerSub.textContent = 'Sin elegir — tocá el objeto en la imagen';
+    }
+  }
+
+  function updateRefsysStatus(){
+    const scaleTxt = pxPerCm
+      ? `Escala: ${pxPerCm.toFixed(2)} px/cm (calibrada)`
+      : 'Escala: cuadro = 100×100cm (por defecto)';
+    const originTxt = originPx ? 'Origen: marcado' : 'Origen: borde inferior (por defecto)';
+    refsysStatus.textContent = `${scaleTxt} · ${originTxt}`;
+  }
+
+  calibScaleBtn.addEventListener('click', () => {
+    if (tracking || !displayCanvas.width) return;
+    calibP1 = null;
+    calibP2 = null;
+    calibDistanceRow.classList.remove('show');
+    clickMode = 'calib1';
+    colorHint.textContent = 'Tocá el primer punto de una distancia que conozcas';
+    colorHint.classList.add('show');
+    redrawOverlays();
+  });
+
+  calibOriginBtn.addEventListener('click', () => {
+    if (tracking || !displayCanvas.width) return;
+    clickMode = 'origin';
+    colorHint.textContent = 'Tocá el punto que representa la altura 0 (el piso, la mesa, la mano al soltar)';
+    colorHint.classList.add('show');
+  });
+
+  function finishCalibClickMode(){
+    clickMode = 'color';
+    colorHint.classList.remove('show');
+    if (!targetColor){
+      colorHint.textContent = DEFAULT_COLOR_HINT;
+      colorHint.classList.add('show');
+    }
+  }
+
+  calibDistanceConfirm.addEventListener('click', () => {
+    const realCm = parseFloat(calibDistanceInput.value);
+    if (!calibP1 || !calibP2 || !(realCm > 0)){
+      calibDistanceInput.focus();
+      return;
+    }
+    const pixelDist = Math.hypot(calibP2.x - calibP1.x, calibP2.y - calibP1.y);
+    pxPerCm = pixelDist / realCm;
+    calibDistanceRow.classList.remove('show');
+    calibDistanceInput.value = '';
+    updateRefsysStatus();
+    finishCalibClickMode();
+    redrawOverlays();
+  });
+
+  displayCanvas.addEventListener('click', (e) => {
+    if (tracking || !displayCanvas.width) return;
+    const { x, y } = canvasCoordsFromEvent(e);
+
+    if (clickMode === 'color'){
+      pickColorAt(x, y);
+    } else if (clickMode === 'calib1'){
+      calibP1 = { x, y };
+      clickMode = 'calib2';
+      colorHint.textContent = 'Tocá el segundo punto de esa misma distancia';
+      redrawOverlays();
+    } else if (clickMode === 'calib2'){
+      calibP2 = { x, y };
+      redrawOverlays();
+      colorHint.classList.remove('show');
+      calibDistanceRow.classList.add('show');
+      calibDistanceInput.focus();
+    } else if (clickMode === 'origin'){
+      originPx = { x, y };
+      updateRefsysStatus();
+      finishCalibClickMode();
+      redrawOverlays();
+    }
+  });
+
+  function drawVideoFrame(){
+    dctx.clearRect(0,0,displayCanvas.width, displayCanvas.height);
+    dctx.drawImage(video, 0, 0, displayCanvas.width, displayCanvas.height);
+  }
+
+  function colorTolerance(){
+    // sensitivity 1..10 -> mayor sensibilidad = más permisivo (acepta colores más distintos)
+    const s = parseInt(sensSlider.value, 10);
+    return 22 + s * 9; // rango aprox 31..112 (distancia RGB)
+  }
+
+  function detectColorCentroid(){
+    if (!targetColor) return null;
+    actx.drawImage(video, 0, 0, ANALYSIS_W, analysisH);
+    const frame = actx.getImageData(0, 0, ANALYSIS_W, analysisH);
+    const d = frame.data;
+    const tol = colorTolerance();
+    const { r: tr, g: tg, b: tb } = targetColor;
+    const W = ANALYSIS_W, H = analysisH;
+
+    // 1) Marcamos qué píxeles se parecen al color elegido
+    const matched = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++){
+      for (let x = 0; x < W; x++){
+        const i = (y * W + x) * 4;
+        const r = d[i], g = d[i+1], b = d[i+2];
+        const dr = r - tr, dg = g - tg, db = b - tb;
+        if ((dr*dr + dg*dg + db*db) < tol*tol){
+          matched[y * W + x] = 1;
+        }
+      }
+    }
+
+    // 2) En vez de promediar TODOS los píxeles parecidos (eso hace que ruido
+    // disperso en el fondo arrastre el punto hacia el centro), buscamos el
+    // grupo de píxeles conectados más grande — así ignoramos manchas sueltas
+    // de la pared o reflejos y nos quedamos con el objeto real.
+    const visited = new Uint8Array(W * H);
+    const stack = new Int32Array(W * H);
+    let bestCount = 0, bestSumX = 0, bestSumY = 0;
+
+    for (let y = 0; y < H; y++){
+      for (let x = 0; x < W; x++){
+        const start = y * W + x;
+        if (!matched[start] || visited[start]) continue;
+
+        let count = 0, sumX = 0, sumY = 0, top = 0;
+        stack[top++] = start;
+        visited[start] = 1;
+        while (top > 0){
+          const cur = stack[--top];
+          const cy = (cur / W) | 0;
+          const cx = cur - cy * W;
+          count++; sumX += cx; sumY += cy;
+          if (cx > 0){ const n = cur - 1; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+          if (cx < W-1){ const n = cur + 1; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+          if (cy > 0){ const n = cur - W; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+          if (cy < H-1){ const n = cur + W; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+        }
+        if (count > bestCount){ bestCount = count; bestSumX = sumX; bestSumY = sumY; }
+      }
+    }
+
+    if (bestCount < 6) return null; // el grupo más grande es demasiado chico, probablemente ruido
+    return {
+      x: (bestSumX / bestCount) * (displayCanvas.width / W),
+      y: (bestSumY / bestCount) * (displayCanvas.height / H),
+      count: bestCount
+    };
+  }
+
+  trackBtn.addEventListener('click', () => {
+    if (tracking) return;
+    tracking = true;
+    points = [];
+    fitResult = null;
+    eqText.classList.remove('show');
+    downloadBtn.disabled = true;
+    trackBtn.disabled = true;
+    statusText.textContent = 'Rastreando…';
+    video.currentTime = 0;
+    video.play();
+    stepFrames();
+  });
+
+  function stepFrames(){
+    const useVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+    const onFrame = () => {
+      if (video.ended || video.paused === true && video.currentTime >= video.duration - 0.02){
+        finishTracking();
+        return;
+      }
+      drawVideoFrame();
+      const detection = detectColorCentroid();
+      if (detection){
+        const yPixel = detection.y;
+        const yMath = currentOriginPxY() - yPixel;
+        points.push({ x: detection.x, yPixel, yMath, t: video.currentTime });
+      }
+      drawTrailSoFar();
+      const pct = Math.min(100, (video.currentTime / (video.duration || 1)) * 100);
+      progressFill.style.width = pct + '%';
+
+      if (video.ended){
+        finishTracking();
+        return;
+      }
+      if (useVFC){
+        video.requestVideoFrameCallback(onFrame);
+      } else {
+        requestAnimationFrame(onFrame);
+      }
+    };
+    if (useVFC){
+      video.requestVideoFrameCallback(onFrame);
+    } else {
+      requestAnimationFrame(onFrame);
+    }
+    video.addEventListener('ended', finishTracking, { once: true });
+  }
+
+  function contrastDot(color){
+    if (!color) return '#E8402C';
+    // Si el color elegido es muy claro, el punto se dibuja con un aro oscuro para que se note
+    return `rgb(${color.r},${color.g},${color.b})`;
+  }
+
+  function drawTrailSoFar(){
+    dctx.save();
+    dctx.fillStyle = contrastDot(targetColor);
+    dctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    dctx.lineWidth = Math.max(1, displayCanvas.width * 0.0015);
+    for (const p of points){
+      dctx.beginPath();
+      dctx.arc(p.x, p.yPixel, Math.max(3, displayCanvas.width * 0.006), 0, Math.PI*2);
+      dctx.fill();
+      dctx.stroke();
+    }
+    dctx.restore();
+  }
+
+  function finishTracking(){
+    if (!tracking) return;
+    tracking = false;
+    video.pause();
+    statusText.textContent = points.length + ' puntos detectados';
+    statPoints.textContent = points.length;
+    trackBtn.disabled = false;
+    trackBtn.textContent = 'Volver a rastrear';
+    if (points.length >= 5){
+      fitAndDraw();
+    } else {
+      statusText.textContent = 'Muy pocos puntos — probá con más sensibilidad o mejor contraste';
+    }
+  }
+
+  function quadraticFit(pts){
+    let n = pts.length, sx=0, sx2=0, sx3=0, sx4=0, sy=0, sxy=0, sx2y=0;
+    for (const p of pts){
+      const x = p.x, y = p.yMath;
+      const x2 = x*x, x3 = x2*x, x4 = x3*x;
+      sx += x; sx2 += x2; sx3 += x3; sx4 += x4;
+      sy += y; sxy += x*y; sx2y += x2*y;
+    }
+    // Solve [ [n,sx,sx2],[sx,sx2,sx3],[sx2,sx3,sx4] ] * [c,b,a]^T = [sy,sxy,sx2y]^T
+    const A = [
+      [n, sx, sx2],
+      [sx, sx2, sx3],
+      [sx2, sx3, sx4]
+    ];
+    const B = [sy, sxy, sx2y];
+    const sol = solve3x3(A, B); // [c, b, a]
+    if (!sol) return null;
+    const [c, b, a] = sol;
+
+    let ssRes = 0, ssTot = 0;
+    const meanY = sy / n;
+    for (const p of pts){
+      const pred = a*p.x*p.x + b*p.x + c;
+      ssRes += (p.yMath - pred) ** 2;
+      ssTot += (p.yMath - meanY) ** 2;
+    }
+    const r2 = ssTot === 0 ? 1 : 1 - (ssRes / ssTot);
+    return { a, b, c, r2 };
+  }
+
+  function solve3x3(A, B){
+    const det = (m) =>
+      m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1]) -
+      m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0]) +
+      m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+    const D = det(A);
+    if (Math.abs(D) < 1e-9) return null;
+    const replaceCol = (m, col, vec) => m.map((row, i) => row.map((v, j) => j === col ? vec[i] : v));
+    const Dx = det(replaceCol(A, 0, B));
+    const Dy = det(replaceCol(A, 1, B));
+    const Dz = det(replaceCol(A, 2, B));
+    return [Dx / D, Dy / D, Dz / D];
+  }
+
+  // Ajuste de altura en función del tiempo, con "a" FIJO en la aceleración
+  // de la gravedad (no se calcula a partir de los datos). Solo b (velocidad
+  // inicial) y c (altura inicial) se ajustan por cuadrados mínimos.
+  function fitHeightVsTime(pts, aFixed){
+    const n = pts.length;
+    let sumT = 0, sumT2 = 0, sumW = 0, sumTW = 0;
+    for (const p of pts){
+      const t = p.t, w = p.yCm - aFixed*t*t;
+      sumT += t; sumT2 += t*t; sumW += w; sumTW += t*w;
+    }
+    const denom = n*sumT2 - sumT*sumT;
+    if (Math.abs(denom) < 1e-9) return null;
+    const b = (n*sumTW - sumT*sumW) / denom;
+    const c = (sumW - b*sumT) / n;
+
+    let ssRes = 0, ssTot = 0;
+    const meanYCm = pts.reduce((s,p)=>s+p.yCm,0) / n;
+    for (const p of pts){
+      const pred = aFixed*p.t*p.t + b*p.t + c;
+      ssRes += (p.yCm - pred) ** 2;
+      ssTot += (p.yCm - meanYCm) ** 2;
+    }
+    const r2 = ssTot === 0 ? 1 : 1 - (ssRes / ssTot);
+    return { a: aFixed, b, c, r2 };
+  }
+
+  // Regresión lineal simple xCm = vx*t + x0 (velocidad horizontal constante,
+  // sin aceleración), usada solo para poder volver a dibujar la curva sobre
+  // la imagen real del video.
+  function fitLinear(ts, xs){
+    const n = ts.length;
+    let sumT = 0, sumT2 = 0, sumX = 0, sumTX = 0;
+    for (let i = 0; i < n; i++){
+      sumT += ts[i]; sumT2 += ts[i]*ts[i]; sumX += xs[i]; sumTX += ts[i]*xs[i];
+    }
+    const denom = n*sumT2 - sumT*sumT;
+    if (Math.abs(denom) < 1e-9) return { vx: 0, x0: xs[0] || 0 };
+    const vx = (n*sumTX - sumT*sumX) / denom;
+    const x0 = (sumX - vx*sumT) / n;
+    return { vx, x0 };
+  }
+
+  // Redondea a N cifras significativas, así el número se ve prolijo tanto si
+  // es grande (c, en píxeles) como si es chico (a, la curvatura).
+  function roundSig(n, sig){
+    if (n === 0) return 0;
+    const mag = Math.floor(Math.log10(Math.abs(n))) + 1;
+    const factor = Math.pow(10, sig - mag);
+    return Math.round(n * factor) / factor;
+  }
+
+  function fmt(n, sig){
+    return roundSig(n, sig).toLocaleString('es-AR', { maximumFractionDigits: 10 });
+  }
+
+  const GRAVITY = -9.81; // "a" queda siempre fijo en la gravedad, no se ajusta
+
+  function fitAndDraw(){
+    // Ahora el modelo es Altura(t): x = tiempo (segundos) desde que arrancó
+    // el seguimiento, y = altura real en cm. "a" queda fijo en -9,81 (la
+    // gravedad); solo b (velocidad inicial) y c (altura inicial) se ajustan
+    // a los datos detectados.
+    const t0 = points[0].t;
+    const htPoints = points.map(p => ({ t: p.t - t0, yCm: p.yMath / currentPxPerCmY() }));
+    fitResult = fitHeightVsTime(htPoints, GRAVITY);
+    if (!fitResult){
+      statusText.textContent = 'No se pudo ajustar la curva (muy pocos instantes distintos)';
+      return;
+    }
+    const { a, b, c, r2 } = fitResult;
+    const bR = roundSig(b, 3);
+    const cR = roundSig(c, 3);
+    const sign = bR >= 0 ? '+' : '−';
+    const signC = cR >= 0 ? '+' : '−';
+    eqText.textContent = `h = ${fmt(a,3)}t² ${sign} ${fmt(Math.abs(bR),3)}t ${signC} ${fmt(Math.abs(cR),3)}`;
+    statR2.textContent = r2.toFixed(3);
+    statA.textContent = fmt(a,3);
+    // Punto más alto de la trayectoria (vértice), en tiempo (s) y altura (cm).
+    const tMax = -b / (2*a);
+    const hMax = a*tMax*tMax + b*tMax + c;
+    statVertex.textContent = `t=${fmt(tMax,3)}s, h=${fmt(hMax,3)}cm`;
+
+    // Para dibujar la curva sobre el video necesitamos también cómo se mueve
+    // horizontalmente en el tiempo (velocidad horizontal constante, sin
+    // aceleración), así convertimos t de nuevo a posición en la imagen.
+    const ts = htPoints.map(p => p.t);
+    const xsCm = points.map(p => p.x / currentPxPerCmX());
+    horizontalFit = fitLinear(ts, xsCm);
+    curveT0 = t0;
+    curveTs = ts;
+
+    animateCurveDraw();
+  }
+
+  function animateCurveDraw(){
+    const minT = Math.min(...curveTs), maxT = Math.max(...curveTs);
+    const { a, b, c } = fitResult;
+    const { vx, x0 } = horizontalFit;
+    const steps = 60;
+    const curvePts = [];
+    for (let i = 0; i <= steps; i++){
+      const t = minT + (maxT - minT) * (i/steps);
+      const hCm = a*t*t + b*t + c;
+      const xCm = x0 + vx*t;
+      const x = xCm * currentPxPerCmX();
+      const yPixel = currentOriginPxY() - (hCm * currentPxPerCmY());
+      curvePts.push({ x, y: yPixel });
+    }
+
+    let progress = 0;
+    const duration = 650;
+    const start = performance.now();
+
+    function frame(now){
+      progress = Math.min(1, (now - start) / duration);
+      drawVideoFrame();
+      drawTrailSoFar();
+
+      const upTo = Math.max(1, Math.floor(curvePts.length * progress));
+      dctx.save();
+      dctx.strokeStyle = '#5EEAD4';
+      dctx.lineWidth = Math.max(2, displayCanvas.width * 0.004);
+      dctx.lineJoin = 'round';
+      dctx.beginPath();
+      curvePts.slice(0, upTo).forEach((p, idx) => {
+        if (idx === 0) dctx.moveTo(p.x, p.y); else dctx.lineTo(p.x, p.y);
+      });
+      dctx.stroke();
+      dctx.restore();
+
+      if (progress < 1){
+        requestAnimationFrame(frame);
+      } else {
+        eqText.classList.add('show');
+        eqNote.classList.add('show');
+        downloadBtn.disabled = false;
+        statusText.textContent = 'Parábola ajustada';
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  downloadBtn.addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.download = 'parabola-angry-bird.png';
+    link.href = displayCanvas.toDataURL('image/png');
+    link.click();
+  });
+
+  resetBtn.addEventListener('click', () => resetState(true));
+
+  function resetState(clearVideo){
+    tracking = false;
+    points = [];
+    fitResult = null;
+    progressFill.style.width = '0%';
+    eqText.textContent = 'h = at² + bt + c';
+    eqText.classList.remove('show');
+    eqNote.classList.remove('show');
+    statPoints.textContent = '—';
+    statR2.textContent = '—';
+    statVertex.textContent = '—';
+    statA.textContent = '—';
+    downloadBtn.disabled = true;
+    trackBtn.disabled = true;
+    trackBtn.textContent = 'Iniciar seguimiento';
+    targetColor = null;
+    updateColorUI();
+    colorHint.classList.remove('show');
+    pxPerCm = null;
+    originPx = null;
+    calibP1 = null;
+    calibP2 = null;
+    colorPickPx = null;
+    clickMode = 'color';
+    calibDistanceRow.classList.remove('show');
+    updateRefsysStatus();
+    statusText.textContent = clearVideo ? 'Esperando video' : 'Cargando video…';
+    if (clearVideo){
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      resetBtn.disabled = true;
+      calibScaleBtn.disabled = true;
+      calibOriginBtn.disabled = true;
+      emptyState.style.display = 'flex';
+      dctx.clearRect(0,0,displayCanvas.width, displayCanvas.height);
+      fileInput.value = '';
+    }
+  }
+})();
+</script>
+
+</body>
+</html>
