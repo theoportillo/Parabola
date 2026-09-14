@@ -247,6 +247,66 @@
   .row{display:flex; gap:10px;}
   .row .btn{flex:1;}
 
+  .compare-section{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .compare-section .field-label{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  #compareCanvas{
+    width:100%;
+    height:auto;
+    display:block;
+    border-radius:10px;
+    background:var(--panel-2);
+    border:1px solid var(--border);
+  }
+  .compare-list{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .compare-item{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:9px 10px;
+  }
+  .compare-dot{
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    flex-shrink:0;
+  }
+  .compare-item-text{flex:1; min-width:0;}
+  .compare-item-title{font-size:12.5px; font-weight:600; color:var(--text);}
+  .compare-item-eq{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    color:var(--text-muted);
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .compare-remove{
+    appearance:none;
+    border:none;
+    background:transparent;
+    color:var(--text-muted);
+    cursor:pointer;
+    font-size:14px;
+    padding:4px 6px;
+    flex-shrink:0;
+  }
+  .compare-remove:hover{color:var(--bird);}
+
   input[type="range"]{
     width:100%;
     accent-color:var(--curve);
@@ -424,12 +484,24 @@
         <div class="stat"><div class="k">Altura máxima</div><div class="v" id="statVertex">—</div></div>
         <div class="stat"><div class="k">a (gravedad, fija)</div><div class="v" id="statA">—</div></div>
       </div>
-      <button class="btn btn-secondary" id="downloadBtn" disabled>Descargar imagen</button>
+      <div class="row">
+        <button class="btn btn-secondary" id="downloadBtn" disabled>Descargar imagen</button>
+        <button class="btn btn-secondary" id="saveRunBtn" disabled>Guardar este tiro</button>
+      </div>
+    </div>
+
+    <div class="compare-section" id="compareSection" style="display:none;">
+      <div class="field-label">
+        <span>Comparar tiros</span>
+        <button class="btn-ghost" id="clearCompareBtn" style="padding:0;">Limpiar</button>
+      </div>
+      <canvas id="compareCanvas"></canvas>
+      <div class="compare-list" id="compareList"></div>
     </div>
 
     <details>
       <summary>¿Cómo funciona?</summary>
-      <p>El programa recorre el video (subido o de la cámara en vivo) cuadro por cuadro y busca los píxeles parecidos al color que elegiste tocando el proyectil. En vez de promediar todos esos píxeles (algo del fondo con un tono parecido podría arrastrar el resultado), busca el grupo de píxeles conectados más grande — así se queda con el objeto real y descarta manchas sueltas. Con el centro de ese grupo arma una nube de puntos, con la altura real (en cm, usando que el área grabada mide 100×100cm) y el instante en que se detectó cada uno. A esos datos se les ajusta h = at² + bt + c, pero con "a" fijo en -9,81 (la aceleración de la gravedad) en vez de calcularlo: solo b (la velocidad inicial) y c (la altura inicial) salen del ajuste por cuadrados mínimos. La curva que se dibuja usa además una regresión lineal de la posición horizontal en función del tiempo (velocidad horizontal constante), solo para poder trazarla sobre la imagen real. Con la cámara en vivo, el seguimiento arranca al tocar "Iniciar seguimiento" y se corta solo cuando el proyectil deja de verse (o con "Detener seguimiento").</p>
+      <p>El programa recorre el video (subido o de la cámara en vivo) cuadro por cuadro y busca los píxeles parecidos al color que elegiste tocando el proyectil. En vez de promediar todos esos píxeles (algo del fondo con un tono parecido podría arrastrar el resultado), busca el grupo de píxeles conectados más grande — así se queda con el objeto real y descarta manchas sueltas. Con el centro de ese grupo arma una nube de puntos, con la altura real (en cm, usando que el área grabada mide 100×100cm) y el instante en que se detectó cada uno. A esos datos se les ajusta h = at² + bt + c, pero con "a" fijo en -9,81 (la aceleración de la gravedad) en vez de calcularlo: solo b (la velocidad inicial) y c (la altura inicial) salen del ajuste por cuadrados mínimos. La curva que se dibuja usa además una regresión lineal de la posición horizontal en función del tiempo (velocidad horizontal constante), solo para poder trazarla sobre la imagen real. Con la cámara en vivo, el seguimiento arranca al tocar "Iniciar seguimiento" y se corta solo cuando el proyectil deja de verse (o con "Detener seguimiento"). "Guardar este tiro" agrega la curva actual a la comparación, para ver varios lanzamientos superpuestos en el mismo gráfico.</p>
     </details>
   </div>
 </main>
@@ -442,6 +514,11 @@
   const trackBtn = document.getElementById('trackBtn');
   const resetBtn = document.getElementById('resetBtn');
   const downloadBtn = document.getElementById('downloadBtn');
+  const saveRunBtn = document.getElementById('saveRunBtn');
+  const compareSection = document.getElementById('compareSection');
+  const compareCanvas = document.getElementById('compareCanvas');
+  const compareList = document.getElementById('compareList');
+  const clearCompareBtn = document.getElementById('clearCompareBtn');
   const sensSlider = document.getElementById('sensSlider');
   const sensVal = document.getElementById('sensVal');
   const displayCanvas = document.getElementById('displayCanvas');
@@ -513,6 +590,10 @@
   let livePreviewRAF = null;
   let missCounter = 0;
   let liveTrackStartTime = 0;
+
+  // Comparación de tiros guardados
+  let savedRuns = []; // { label, color, a, b, c, r2, tRangeMax, tMax, hMax }
+  const RUN_COLORS = ['#5EEAD4','#FDBA74','#C4B5FD','#FCA5A5','#93C5FD','#FDE047','#86EFAC','#F9A8D4'];
 
   function currentPxPerCmX(){ return pxPerCm || pxPerCmX; }
   function currentPxPerCmY(){ return pxPerCm || pxPerCmY; }
@@ -879,6 +960,7 @@
     missCounter = 0;
     eqText.classList.remove('show');
     downloadBtn.disabled = true;
+    saveRunBtn.disabled = true;
     trackBtn.disabled = true;
     statusText.textContent = liveMode ? 'Rastreando… tirá el proyectil' : 'Rastreando…';
     if (liveMode){
@@ -1174,6 +1256,7 @@
         eqText.classList.add('show');
         eqNote.classList.add('show');
         downloadBtn.disabled = false;
+        saveRunBtn.disabled = false;
         statusText.textContent = 'Parábola ajustada';
       }
     }
@@ -1186,6 +1269,122 @@
     link.href = displayCanvas.toDataURL('image/png');
     link.click();
   });
+
+  saveRunBtn.addEventListener('click', () => {
+    if (!fitResult || curveTs.length === 0) return;
+    const { a, b, c, r2 } = fitResult;
+    const tMax = -b / (2*a);
+    const hMax = a*tMax*tMax + b*tMax + c;
+    savedRuns.push({
+      label: `Tiro ${savedRuns.length + 1}`,
+      color: RUN_COLORS[savedRuns.length % RUN_COLORS.length],
+      a, b, c, r2,
+      tRangeMax: Math.max(...curveTs),
+      tMax, hMax
+    });
+    saveRunBtn.textContent = 'Guardado ✓';
+    setTimeout(() => { saveRunBtn.textContent = 'Guardar este tiro'; }, 1200);
+    renderCompareSection();
+  });
+
+  clearCompareBtn.addEventListener('click', () => {
+    savedRuns = [];
+    renderCompareSection();
+  });
+
+  function renderCompareSection(){
+    if (savedRuns.length === 0){
+      compareSection.style.display = 'none';
+      return;
+    }
+    compareSection.style.display = 'flex';
+    drawComparisonChart();
+    compareList.innerHTML = savedRuns.map((r, i) => {
+      const sign = r.b >= 0 ? '+' : '−';
+      const signC = r.c >= 0 ? '+' : '−';
+      const eq = `h=${fmt(r.a,3)}t²${sign}${fmt(Math.abs(r.b),3)}t${signC}${fmt(Math.abs(r.c),3)} · máx ${fmt(r.hMax,3)}cm en t=${fmt(r.tMax,3)}s`;
+      return `<div class="compare-item">
+        <span class="compare-dot" style="background:${r.color}"></span>
+        <div class="compare-item-text">
+          <div class="compare-item-title">${r.label}</div>
+          <div class="compare-item-eq">${eq}</div>
+        </div>
+        <button class="compare-remove" data-idx="${i}" title="Quitar">✕</button>
+      </div>`;
+    }).join('');
+    compareList.querySelectorAll('.compare-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.idx, 10);
+        savedRuns.splice(idx, 1);
+        savedRuns.forEach((r, i) => { r.label = `Tiro ${i + 1}`; });
+        renderCompareSection();
+      });
+    });
+  }
+
+  function drawComparisonChart(){
+    const W = 640, H = 360;
+    compareCanvas.width = W;
+    compareCanvas.height = H;
+    const ctx = compareCanvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    const pad = { left: 46, right: 16, top: 16, bottom: 30 };
+    const plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
+
+    let maxT = 0.001, minH = 0, maxH = 0.001;
+    savedRuns.forEach(r => {
+      maxT = Math.max(maxT, r.tRangeMax);
+      for (let i = 0; i <= 40; i++){
+        const t = r.tRangeMax * i / 40;
+        const h = r.a*t*t + r.b*t + r.c;
+        minH = Math.min(minH, h);
+        maxH = Math.max(maxH, h);
+      }
+    });
+    minH = Math.min(0, minH);
+    const pd = (maxH - minH) * 0.12 || 1;
+    maxH += pd;
+    minH -= pd * 0.3;
+
+    const xScale = t => pad.left + (t / maxT) * plotW;
+    const yScale = h => pad.top + plotH - ((h - minH) / (maxH - minH)) * plotH;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++){
+      const h = minH + (maxH - minH) * i / 4;
+      const y = yScale(h);
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+      ctx.fillStyle = '#8A94A0';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(Math.round(h) + 'cm', pad.left - 6, y);
+    }
+    for (let i = 0; i <= 4; i++){
+      const t = maxT * i / 4;
+      const x = xScale(t);
+      ctx.fillStyle = '#8A94A0';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(t.toFixed(2) + 's', x, H - pad.bottom + 6);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.moveTo(pad.left, yScale(0)); ctx.lineTo(W - pad.right, yScale(0)); ctx.stroke();
+
+    savedRuns.forEach(r => {
+      ctx.strokeStyle = r.color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      for (let i = 0; i <= 60; i++){
+        const t = r.tRangeMax * i / 60;
+        const h = r.a*t*t + r.b*t + r.c;
+        const x = xScale(t), y = yScale(h);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    });
+  }
 
   resetBtn.addEventListener('click', () => resetState(true));
 
@@ -1202,6 +1401,7 @@
     statVertex.textContent = '—';
     statA.textContent = '—';
     downloadBtn.disabled = true;
+    saveRunBtn.disabled = true;
     trackBtn.disabled = true;
     trackBtn.textContent = 'Iniciar seguimiento';
     targetColor = null;
@@ -1232,6 +1432,8 @@
       emptyState.style.display = 'flex';
       dctx.clearRect(0,0,displayCanvas.width, displayCanvas.height);
       fileInput.value = '';
+      savedRuns = [];
+      renderCompareSection();
     }
   }
 })();
