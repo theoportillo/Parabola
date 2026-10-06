@@ -476,15 +476,17 @@
     <div class="results">
       <div class="equation-box">
         <div class="eq-label">Altura en función del tiempo</div>
-        <div class="eq" id="eqText">h = at² + bt + c</div>
-        <div class="eq-note">t en segundos, h en centímetros (área grabada: 100×100 cm)</div>
+        <div class="eq" id="eqText">y(t) = y₀ + v₀·t + ½·g·t²</div>
+        <div class="eq-note">y₀ altura inicial (m) · v₀ velocidad inicial vertical (m/s) · g gravedad · t tiempo (s)</div>
       </div>
       <div class="stats-grid">
         <div class="stat"><div class="k">Puntos detectados</div><div class="v" id="statPoints">—</div></div>
         <div class="stat"><div class="k">Ajuste (R²)</div><div class="v" id="statR2">—</div></div>
         <div class="stat"><div class="k">Altura máxima</div><div class="v" id="statVertex">—</div></div>
-        <div class="stat"><div class="k">a (gravedad, fija)</div><div class="v" id="statA">—</div></div>
-        <div class="stat"><div class="k">Velocidad inicial</div><div class="v" id="statV0">—</div></div>
+        <div class="stat"><div class="k">g (gravedad, fija)</div><div class="v" id="statA">—</div></div>
+        <div class="stat"><div class="k">y₀ (altura inicial)</div><div class="v" id="statY0">—</div></div>
+        <div class="stat"><div class="k">v₀ (vel. inicial vertical)</div><div class="v" id="statV0y">—</div></div>
+        <div class="stat"><div class="k">Velocidad inicial total</div><div class="v" id="statV0">—</div></div>
         <div class="stat"><div class="k">X final (alcance)</div><div class="v" id="statXFinal">—</div></div>
       </div>
       <div class="row">
@@ -504,7 +506,7 @@
 
     <details>
       <summary>¿Cómo funciona?</summary>
-      <p>El programa recorre el video (subido o de la cámara en vivo) cuadro por cuadro y busca los píxeles parecidos al color que elegiste tocando el proyectil. En vez de promediar todos esos píxeles (algo del fondo con un tono parecido podría arrastrar el resultado), busca el grupo de píxeles conectados más grande — así se queda con el objeto real y descarta manchas sueltas. Con el centro de ese grupo arma una nube de puntos, con la altura real (en cm, usando que el área grabada mide 100×100cm) y el instante en que se detectó cada uno. A esos datos se les ajusta h = at² + bt + c, pero con "a" fijo en -9,81 (la aceleración de la gravedad) en vez de calcularlo: solo b (la velocidad inicial) y c (la altura inicial) salen del ajuste por cuadrados mínimos. La curva que se dibuja usa además una regresión lineal de la posición horizontal en función del tiempo (velocidad horizontal constante), solo para poder trazarla sobre la imagen real. Con la cámara en vivo, el seguimiento arranca al tocar "Iniciar seguimiento" y se corta solo cuando el proyectil deja de verse (o con "Detener seguimiento"). "Guardar este tiro" agrega la curva actual a la comparación, para ver varios lanzamientos superpuestos en el mismo gráfico.</p>
+      <p>El programa recorre el video (subido o de la cámara en vivo) cuadro por cuadro y busca los píxeles parecidos al color que elegiste tocando el proyectil. En vez de promediar todos esos píxeles (algo del fondo con un tono parecido podría arrastrar el resultado), busca el grupo de píxeles conectados más grande — así se queda con el objeto real y descarta manchas sueltas. Con el centro de ese grupo arma una nube de puntos, con la altura real (en metros, según la escala del sistema de referencia) y el instante en que se detectó cada uno. A esos datos se les ajusta y(t) = y₀ + v₀·t + ½·g·t², con g fija en −9,81 m/s² (la gravedad): solo y₀ (altura inicial) y v₀ (velocidad inicial) salen del ajuste por cuadrados mínimos. La curva que se dibuja usa además una regresión lineal de la posición horizontal en función del tiempo (velocidad horizontal constante), solo para poder trazarla sobre la imagen real. Con la cámara en vivo, el seguimiento arranca al tocar "Iniciar seguimiento" y se corta solo cuando el proyectil deja de verse (o con "Detener seguimiento"). "Guardar este tiro" agrega la curva actual a la comparación, para ver varios lanzamientos superpuestos en el mismo gráfico.</p>
     </details>
   </div>
 </main>
@@ -534,6 +536,8 @@
   const statR2 = document.getElementById('statR2');
   const statVertex = document.getElementById('statVertex');
   const statA = document.getElementById('statA');
+  const statY0 = document.getElementById('statY0');
+  const statV0y = document.getElementById('statV0y');
   const statV0 = document.getElementById('statV0');
   const statXFinal = document.getElementById('statXFinal');
   const colorHint = document.getElementById('colorHint');
@@ -1151,7 +1155,7 @@
     const n = pts.length;
     let sumT = 0, sumT2 = 0, sumW = 0, sumTW = 0;
     for (const p of pts){
-      const t = p.t, w = p.yCm - aFixed*t*t;
+      const t = p.t, w = p.y - aFixed*t*t;
       sumT += t; sumT2 += t*t; sumW += w; sumTW += t*w;
     }
     const denom = n*sumT2 - sumT*sumT;
@@ -1160,11 +1164,11 @@
     const c = (sumW - b*sumT) / n;
 
     let ssRes = 0, ssTot = 0;
-    const meanYCm = pts.reduce((s,p)=>s+p.yCm,0) / n;
+    const meanYCm = pts.reduce((s,p)=>s+p.y,0) / n;
     for (const p of pts){
       const pred = aFixed*p.t*p.t + b*p.t + c;
-      ssRes += (p.yCm - pred) ** 2;
-      ssTot += (p.yCm - meanYCm) ** 2;
+      ssRes += (p.y - pred) ** 2;
+      ssTot += (p.y - meanYCm) ** 2;
     }
     const r2 = ssTot === 0 ? 1 : 1 - (ssRes / ssTot);
     return { a: aFixed, b, c, r2 };
@@ -1212,52 +1216,57 @@
     return roundSig(n, sig).toLocaleString('es-AR', { maximumFractionDigits: 10 });
   }
 
-  const GRAVITY = -9.81; // "a" queda siempre fijo en la gravedad, no se ajusta
+  const GRAVITY = -9.81; // g en m/s². Modelo: y(t) = y0 + v0·t + ½·g·t²
+
+  // Texto de la ecuación y(t) = y0 + v0·t + ½·g·t²  (y0 en m, v0 en m/s)
+  function eqString(y0, v0, g){
+    const y0R = roundSig(y0, 3), v0R = roundSig(v0, 3);
+    const sv = v0R >= 0 ? '+' : '−';
+    return `y(t) = ${fmt(y0R,3)} ${sv} ${fmt(Math.abs(v0R),3)}·t + ½·(${fmt(g,3)})·t²`;
+  }
 
   function fitAndDraw(){
-    // Ahora el modelo es Altura(t): x = tiempo (segundos) desde que arrancó
-    // el seguimiento, y = altura real en cm. "a" queda fijo en -9,81 (la
-    // gravedad); solo b (velocidad inicial) y c (altura inicial) se ajustan
-    // a los datos detectados.
+    // Modelo: y(t) = y0 + v0·t + ½·g·t²  con t en segundos desde que arrancó
+    // el seguimiento, y en METROS, y g = -9,81 m/s² fija. Solo v0 (velocidad
+    // inicial vertical) e y0 (altura inicial) se ajustan a los datos.
+    // Internamente a = g/2, b = v0, c = y0.
     const t0 = points[0].t;
-    const htPoints = points.map(p => ({ t: p.t - t0, yCm: (currentOriginPxY() - p.yPixel) / currentPxPerCmY() }));
-    fitResult = fitHeightVsTime(htPoints, GRAVITY);
+    const htPoints = points.map(p => ({ t: p.t - t0, y: (currentOriginPxY() - p.yPixel) / currentPxPerCmY() / 100 }));
+    fitResult = fitHeightVsTime(htPoints, GRAVITY / 2);
     if (!fitResult){
       statusText.textContent = 'No se pudo ajustar la curva (muy pocos instantes distintos)';
       return;
     }
     const { a, b, c, r2 } = fitResult;
-    const bR = roundSig(b, 3);
-    const cR = roundSig(c, 3);
-    const sign = bR >= 0 ? '+' : '−';
-    const signC = cR >= 0 ? '+' : '−';
-    eqText.textContent = `h = ${fmt(a,3)}t² ${sign} ${fmt(Math.abs(bR),3)}t ${signC} ${fmt(Math.abs(cR),3)}`;
+    eqText.textContent = eqString(c, b, GRAVITY);
     statR2.textContent = r2.toFixed(3);
-    statA.textContent = fmt(a,3);
-    // Punto más alto de la trayectoria (vértice), en tiempo (s) y altura (cm).
+    statA.textContent = `${fmt(GRAVITY,3)} m/s²`;
+    statY0.textContent = `${fmt(c,3)} m`;
+    statV0y.textContent = `${fmt(b,3)} m/s`;
+    // Punto más alto de la trayectoria (vértice), en tiempo (s) y altura (m).
     const tMax = -b / (2*a);
     const hMax = a*tMax*tMax + b*tMax + c;
-    statVertex.textContent = `t=${fmt(tMax,3)}s, h=${fmt(hMax,3)}cm`;
+    statVertex.textContent = `t=${fmt(tMax,3)}s, y=${fmt(hMax,3)}m`;
 
     // Para dibujar la curva sobre el video necesitamos también cómo se mueve
     // horizontalmente en el tiempo (velocidad horizontal constante, sin
     // aceleración), así convertimos t de nuevo a posición en la imagen.
     const ts = htPoints.map(p => p.t);
-    const xsCm = points.map(p => p.x / currentPxPerCmX());
-    horizontalFit = fitLinear(ts, xsCm);
+    const xsM = points.map(p => p.x / currentPxPerCmX() / 100);
+    horizontalFit = fitLinear(ts, xsM);
     curveT0 = t0;
     curveTs = ts;
 
     // Velocidad inicial: combina la componente horizontal (vx, constante) y
     // la vertical (b, la del ajuste) en el instante t=0.
     const v0 = Math.sqrt(horizontalFit.vx**2 + b**2);
-    statV0.textContent = `${fmt(v0,3)} cm/s`;
+    statV0.textContent = `${fmt(v0,3)} m/s`;
 
     // X final: dónde está el proyectil cuando vuelve a h=0 (alcance).
     const tLand = landingTime(a, b, c);
     if (tLand !== null){
-      const xFinalCm = horizontalFit.x0 + horizontalFit.vx * tLand;
-      statXFinal.textContent = `${fmt(xFinalCm,3)} cm (t=${fmt(tLand,3)}s)`;
+      const xFinalM = horizontalFit.x0 + horizontalFit.vx * tLand;
+      statXFinal.textContent = `${fmt(xFinalM,3)} m (t=${fmt(tLand,3)}s)`;
     } else {
       statXFinal.textContent = '—';
     }
@@ -1273,10 +1282,10 @@
     const curvePts = [];
     for (let i = 0; i <= steps; i++){
       const t = minT + (maxT - minT) * (i/steps);
-      const hCm = a*t*t + b*t + c;
-      const xCm = x0 + vx*t;
-      const x = xCm * currentPxPerCmX();
-      const yPixel = currentOriginPxY() - (hCm * currentPxPerCmY());
+      const hM = a*t*t + b*t + c;
+      const xM = x0 + vx*t;
+      const x = xM * 100 * currentPxPerCmX();
+      const yPixel = currentOriginPxY() - (hM * 100 * currentPxPerCmY());
       curvePts.push({ x, y: yPixel });
     }
 
@@ -1352,9 +1361,7 @@
     compareSection.style.display = 'flex';
     drawComparisonChart();
     compareList.innerHTML = savedRuns.map((r, i) => {
-      const sign = r.b >= 0 ? '+' : '−';
-      const signC = r.c >= 0 ? '+' : '−';
-      const eq = `h=${fmt(r.a,3)}t²${sign}${fmt(Math.abs(r.b),3)}t${signC}${fmt(Math.abs(r.c),3)} · máx ${fmt(r.hMax,3)}cm en t=${fmt(r.tMax,3)}s`;
+      const eq = `${eqString(r.c, r.b, GRAVITY)} · máx ${fmt(r.hMax,3)}m en t=${fmt(r.tMax,3)}s`;
       return `<div class="compare-item">
         <span class="compare-dot" style="background:${r.color}"></span>
         <div class="compare-item-text">
@@ -1412,7 +1419,7 @@
       ctx.fillStyle = '#8A94A0';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      ctx.fillText(Math.round(h) + 'cm', pad.left - 6, y);
+      ctx.fillText(h.toFixed(2) + 'm', pad.left - 6, y);
     }
     for (let i = 0; i <= 4; i++){
       const t = maxT * i / 4;
@@ -1446,13 +1453,15 @@
     points = [];
     fitResult = null;
     progressFill.style.width = '0%';
-    eqText.textContent = 'h = at² + bt + c';
+    eqText.textContent = 'y(t) = y₀ + v₀·t + ½·g·t²';
     eqText.classList.remove('show');
     eqNote.classList.remove('show');
     statPoints.textContent = '—';
     statR2.textContent = '—';
     statVertex.textContent = '—';
     statA.textContent = '—';
+    statY0.textContent = '—';
+    statV0y.textContent = '—';
     statV0.textContent = '—';
     statXFinal.textContent = '—';
     downloadBtn.disabled = true;
