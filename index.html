@@ -464,7 +464,7 @@
         <button class="btn btn-secondary" id="calibOriginBtn" disabled>Marcar origen</button>
       </div>
       <button class="btn-ghost" id="resetRefsysBtn" style="align-self:flex-start; padding:0;">Restablecer referencia</button>
-      <div class="refsys-status" id="refsysStatus">Sin calibrar: usa el cuadro como 100×100cm y el borde inferior como altura 0</div>
+      <div class="refsys-status" id="refsysStatus">Sin calibrar: la escala se deduce sola de la gravedad y el borde inferior es la altura 0</div>
       <div class="calib-distance-row" id="calibDistanceRow">
         <input type="number" id="calibDistanceInput" placeholder="Distancia real entre los puntos (cm)" inputmode="decimal" step="any" min="0">
         <button class="btn btn-primary" id="calibDistanceConfirm">Confirmar</button>
@@ -506,7 +506,7 @@
 
     <details>
       <summary>¿Cómo funciona?</summary>
-      <p>El programa recorre el video (subido o de la cámara en vivo) cuadro por cuadro y busca los píxeles parecidos al color que elegiste tocando el proyectil. En vez de promediar todos esos píxeles (algo del fondo con un tono parecido podría arrastrar el resultado), busca el grupo de píxeles conectados más grande — así se queda con el objeto real y descarta manchas sueltas. Con el centro de ese grupo arma una nube de puntos, con la altura real (en metros, según la escala del sistema de referencia) y el instante en que se detectó cada uno. A esos datos se les ajusta y(t) = y₀ + v₀·t + ½·g·t², con g fija en −9,81 m/s² (la gravedad): solo y₀ (altura inicial) y v₀ (velocidad inicial) salen del ajuste por cuadrados mínimos. La curva que se dibuja usa además una regresión lineal de la posición horizontal en función del tiempo (velocidad horizontal constante), solo para poder trazarla sobre la imagen real. Con la cámara en vivo, el seguimiento arranca al tocar "Iniciar seguimiento" y se corta solo cuando el proyectil deja de verse (o con "Detener seguimiento"). "Guardar este tiro" agrega la curva actual a la comparación, para ver varios lanzamientos superpuestos en el mismo gráfico.</p>
+      <p>El programa recorre el video (subido o de la cámara en vivo) cuadro por cuadro y busca los píxeles parecidos al color que elegiste tocando el proyectil. En vez de promediar todos esos píxeles (algo del fondo con un tono parecido podría arrastrar el resultado), busca el grupo de píxeles conectados más grande — así se queda con el objeto real y descarta manchas sueltas. Con el centro de ese grupo arma una nube de puntos, con la altura real (en metros, según la escala del sistema de referencia) y el instante en que se detectó cada uno. A esos datos se les ajusta y(t) = y₀ + v₀·t + ½·g·t², con g fija en −9,81 m/s² (la gravedad): solo y₀ (altura inicial) y v₀ (velocidad inicial) salen del ajuste por cuadrados mínimos. Si no calibraste la escala, el programa la deduce de la propia parábola usando que la gravedad vale 9,81 m/s². La curva celeste que se dibuja sobre la imagen es un ajuste libre en píxeles (con su propia curvatura), así siempre acompaña a los puntos; si calibraste la escala y la gravedad medida no da cerca de 9,81, te avisa en el estado. Con la cámara en vivo, el seguimiento arranca al tocar "Iniciar seguimiento" y se corta solo cuando el proyectil deja de verse (o con "Detener seguimiento"). "Guardar este tiro" agrega la curva actual a la comparación, para ver varios lanzamientos superpuestos en el mismo gráfico.</p>
     </details>
   </div>
 </main>
@@ -573,6 +573,10 @@
   let horizontalFit = { vx: 0, x0: 0 }; // x(t) = x0 + vx*t, para volver a dibujar la curva
   let curveT0 = 0;
   let curveTs = [];
+  // Curva que se DIBUJA sobre el video: ajuste libre en píxeles (no depende de la escala ni de g)
+  let curvePx = null;       // {a,b,c,vx,x0,tMin,tMax}
+  let lastPxPerM = null;    // escala realmente usada en el último ajuste (px por metro)
+  let fitNote = 'Parábola ajustada';
 
   // Calibración a centímetros reales: el área grabada mide 100cm x 100cm,
   // así que el ancho del video equivale a 100cm y el alto también a 100cm
@@ -641,6 +645,7 @@
     analysisH = Math.round(ANALYSIS_W * (video.videoHeight / video.videoWidth));
     acanvas.width = ANALYSIS_W;
     acanvas.height = analysisH;
+    drawVideoFrame(); // al cambiar width/height el canvas se borra: hay que volver a dibujar el cuadro
     emptyState.style.display = 'none';
     resetBtn.disabled = false;
     calibScaleBtn.disabled = false;
@@ -818,7 +823,7 @@
   function updateRefsysStatus(){
     const scaleTxt = pxPerCm
       ? `Escala: ${pxPerCm.toFixed(2)} px/cm (calibrada)`
-      : 'Escala: cuadro = 100×100cm (por defecto)';
+      : 'Escala: automática, se deduce de la gravedad (9,81 m/s²)';
     const originTxt = originPx ? 'Origen: marcado' : 'Origen: borde inferior (por defecto)';
     refsysStatus.textContent = `${scaleTxt} · ${originTxt}`;
   }
@@ -1008,8 +1013,11 @@
     const useVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
     const MAX_LIVE_SECONDS = 8; // corte de seguridad si nunca se detecta nada
     const MAX_MISSES = 30; // ~0.5-1s sin detectar tras haber visto el proyectil
-    const onFrame = () => {
+    const onFrame = (_now, metadata) => {
       if (!tracking) return;
+      // mediaTime = instante exacto del cuadro que se está mostrando (más preciso que currentTime)
+      const frameT = (metadata && typeof metadata === 'object' && typeof metadata.mediaTime === 'number')
+        ? metadata.mediaTime : video.currentTime;
       if (!liveMode && (video.ended || (video.paused === true && video.currentTime >= video.duration - 0.02))){
         finishTracking();
         return;
@@ -1019,7 +1027,7 @@
       if (detection){
         const yPixel = detection.y;
         const yMath = currentOriginPxY() - yPixel;
-        points.push({ x: detection.x, yPixel, yMath, t: video.currentTime });
+        points.push({ x: detection.x, yPixel, yMath, t: frameT });
         missCounter = 0;
       } else if (liveMode){
         missCounter++;
@@ -1226,12 +1234,47 @@
   }
 
   function fitAndDraw(){
-    // Modelo: y(t) = y0 + v0·t + ½·g·t²  con t en segundos desde que arrancó
-    // el seguimiento, y en METROS, y g = -9,81 m/s² fija. Solo v0 (velocidad
-    // inicial vertical) e y0 (altura inicial) se ajustan a los datos.
-    // Internamente a = g/2, b = v0, c = y0.
+    // Modelo físico: y(t) = y0 + v0·t + ½·g·t²  con g = -9,81 m/s² fija.
+    // PERO la curva que se dibuja sobre el video sale de un ajuste LIBRE en píxeles
+    // (curvatura incluida), así siempre pasa por los puntos. Antes se dibujaba el modelo
+    // con g fija sobre una escala "cuadro = 1 m": si esa escala no era la real, la
+    // curva salía altísima y angosta (R² negativo).
     const t0 = points[0].t;
-    const htPoints = points.map(p => ({ t: p.t - t0, y: (currentOriginPxY() - p.yPixel) / currentPxPerCmY() / 100 }));
+    const ts = points.map(p => p.t - t0);
+    const oy = currentOriginPxY();
+    const yUp = points.map(p => oy - p.yPixel);        // altura en píxeles (hacia arriba)
+
+    const free = quadraticFit(ts.map((t, i) => ({ x: t, yMath: yUp[i] })));
+    if (!free){
+      statusText.textContent = 'No se pudo ajustar la curva (muy pocos instantes distintos)';
+      return;
+    }
+    const lin = fitLinear(ts, points.map(p => p.x));   // x(t) en píxeles
+    curvePx = { a: free.a, b: free.b, c: free.c, vx: lin.vx, x0: lin.x0,
+                tMin: Math.min(...ts), tMax: Math.max(...ts) };
+
+    // Escala (px por metro): calibrada a mano, o deducida de la gravedad.
+    // Si la parábola del video tiene curvatura a (px/s²) y la real es g, entonces
+    // g_px = -2a  =>  px por metro = g_px / 9,81.
+    fitNote = 'Parábola ajustada';
+    let pxPerM;
+    if (pxPerCm){
+      pxPerM = pxPerCm * 100;
+      const gMeas = (-2 * free.a) / pxPerM;
+      if (!(Math.abs(gMeas - 9.81) / 9.81 <= 0.25)){
+        fitNote = `Ojo: con esta escala la gravedad medida da ${fmt(gMeas,3)} m/s² (debería ser 9,81). Revisá la calibración o los fps del video`;
+      }
+    } else if (free.a < 0){
+      pxPerM = (-2 * free.a) / (-GRAVITY);
+      fitNote = 'Parábola ajustada · escala deducida de g';
+    } else {
+      pxPerM = displayCanvas.height; // último recurso: alto del cuadro = 1 m
+      fitNote = 'Ojo: los puntos no forman una parábola hacia abajo; la escala es solo aproximada';
+    }
+    lastPxPerM = pxPerM;
+
+    // Modelo con g fija, en metros: solo v0 (b) e y0 (c) salen del ajuste.
+    const htPoints = ts.map((t, i) => ({ t, y: yUp[i] / pxPerM }));
     fitResult = fitHeightVsTime(htPoints, GRAVITY / 2);
     if (!fitResult){
       statusText.textContent = 'No se pudo ajustar la curva (muy pocos instantes distintos)';
@@ -1248,17 +1291,12 @@
     const hMax = a*tMax*tMax + b*tMax + c;
     statVertex.textContent = `t=${fmt(tMax,3)}s, y=${fmt(hMax,3)}m`;
 
-    // Para dibujar la curva sobre el video necesitamos también cómo se mueve
-    // horizontalmente en el tiempo (velocidad horizontal constante, sin
-    // aceleración), así convertimos t de nuevo a posición en la imagen.
-    const ts = htPoints.map(p => p.t);
-    const xsM = points.map(p => p.x / currentPxPerCmX() / 100);
+    // Velocidad horizontal constante (en m/s) para velocidad inicial y alcance.
+    const xsM = points.map(p => p.x / pxPerM);
     horizontalFit = fitLinear(ts, xsM);
     curveT0 = t0;
     curveTs = ts;
 
-    // Velocidad inicial: combina la componente horizontal (vx, constante) y
-    // la vertical (b, la del ajuste) en el instante t=0.
     const v0 = Math.sqrt(horizontalFit.vx**2 + b**2);
     statV0.textContent = `${fmt(v0,3)} m/s`;
 
@@ -1275,17 +1313,13 @@
   }
 
   function animateCurveDraw(){
-    const minT = Math.min(...curveTs), maxT = Math.max(...curveTs);
-    const { a, b, c } = fitResult;
-    const { vx, x0 } = horizontalFit;
+    const { a, b, c, vx, x0, tMin: minT, tMax: maxT } = curvePx;
     const steps = 60;
     const curvePts = [];
     for (let i = 0; i <= steps; i++){
       const t = minT + (maxT - minT) * (i/steps);
-      const hM = a*t*t + b*t + c;
-      const xM = x0 + vx*t;
-      const x = xM * 100 * currentPxPerCmX();
-      const yPixel = currentOriginPxY() - (hM * 100 * currentPxPerCmY());
+      const x = x0 + vx*t;                              // píxeles
+      const yPixel = currentOriginPxY() - (a*t*t + b*t + c);
       curvePts.push({ x, y: yPixel });
     }
 
@@ -1317,7 +1351,7 @@
         eqNote.classList.add('show');
         downloadBtn.disabled = false;
         saveRunBtn.disabled = false;
-        statusText.textContent = 'Parábola ajustada';
+        statusText.textContent = fitNote;
       }
     }
     requestAnimationFrame(frame);
@@ -1341,7 +1375,7 @@
       a, b, c, r2,
       tRangeMax: Math.max(...curveTs),
       tMax, hMax,
-      ref: { scale: currentPxPerCmX(), scaleCustom: !!pxPerCm, originCustom: !!originPx }
+      ref: { scale: (lastPxPerM || 100) / 100, scaleCustom: !!pxPerCm, originCustom: !!originPx }
     });
     saveRunBtn.textContent = 'Guardado ✓';
     setTimeout(() => { saveRunBtn.textContent = 'Guardar este tiro'; }, 1200);
@@ -1367,7 +1401,7 @@
         <div class="compare-item-text">
           <div class="compare-item-title">${r.label}</div>
           <div class="compare-item-eq">${eq}</div>
-          <div class="compare-item-eq">Ref: ${r.ref.scale.toFixed(2)} px/cm${r.ref.scaleCustom ? '' : ' (def.)'} · origen ${r.ref.originCustom ? 'marcado' : 'borde inferior'}</div>
+          <div class="compare-item-eq">Ref: ${r.ref.scale.toFixed(2)} px/cm${r.ref.scaleCustom ? '' : ' (auto)'} · origen ${r.ref.originCustom ? 'marcado' : 'borde inferior'}</div>
         </div>
         <button class="compare-remove" data-idx="${i}" title="Quitar">✕</button>
       </div>`;
