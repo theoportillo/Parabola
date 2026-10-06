@@ -463,6 +463,7 @@
         <button class="btn btn-secondary" id="calibScaleBtn" disabled>Calibrar escala</button>
         <button class="btn btn-secondary" id="calibOriginBtn" disabled>Marcar origen</button>
       </div>
+      <button class="btn-ghost" id="resetRefsysBtn" style="align-self:flex-start; padding:0;">Restablecer referencia</button>
       <div class="refsys-status" id="refsysStatus">Sin calibrar: usa el cuadro como 100×100cm y el borde inferior como altura 0</div>
       <div class="calib-distance-row" id="calibDistanceRow">
         <input type="number" id="calibDistanceInput" placeholder="Distancia real entre los puntos (cm)" inputmode="decimal" step="any" min="0">
@@ -483,6 +484,8 @@
         <div class="stat"><div class="k">Ajuste (R²)</div><div class="v" id="statR2">—</div></div>
         <div class="stat"><div class="k">Altura máxima</div><div class="v" id="statVertex">—</div></div>
         <div class="stat"><div class="k">a (gravedad, fija)</div><div class="v" id="statA">—</div></div>
+        <div class="stat"><div class="k">Velocidad inicial</div><div class="v" id="statV0">—</div></div>
+        <div class="stat"><div class="k">X final (alcance)</div><div class="v" id="statXFinal">—</div></div>
       </div>
       <div class="row">
         <button class="btn btn-secondary" id="downloadBtn" disabled>Descargar imagen</button>
@@ -531,6 +534,8 @@
   const statR2 = document.getElementById('statR2');
   const statVertex = document.getElementById('statVertex');
   const statA = document.getElementById('statA');
+  const statV0 = document.getElementById('statV0');
+  const statXFinal = document.getElementById('statXFinal');
   const colorHint = document.getElementById('colorHint');
   const colorSwatch = document.getElementById('colorSwatch');
   const colorPickerSub = document.getElementById('colorPickerSub');
@@ -814,6 +819,18 @@
     refsysStatus.textContent = `${scaleTxt} · ${originTxt}`;
   }
 
+  document.getElementById('resetRefsysBtn').addEventListener('click', () => {
+    if (tracking) return;
+    pxPerCm = null;
+    originPx = null;
+    calibP1 = null;
+    calibP2 = null;
+    calibDistanceRow.classList.remove('show');
+    finishCalibClickMode();
+    updateRefsysStatus();
+    if (points.length >= 5) fitAndDraw(); else if (displayCanvas.width) redrawOverlays();
+  });
+
   calibScaleBtn.addEventListener('click', () => {
     if (tracking || !displayCanvas.width) return;
     calibP1 = null;
@@ -854,7 +871,13 @@
     updateRefsysStatus();
     finishCalibClickMode();
     redrawOverlays();
+    refitIfTracked();
   });
+
+  // Si ya hay un tiro rastreado, recalcula todo con la referencia nueva.
+  function refitIfTracked(){
+    if (!tracking && points.length >= 5) fitAndDraw();
+  }
 
   displayCanvas.addEventListener('click', (e) => {
     if (tracking || !displayCanvas.width) return;
@@ -878,6 +901,7 @@
       updateRefsysStatus();
       finishCalibClickMode();
       redrawOverlays();
+      refitIfTracked();
     }
   });
 
@@ -1162,6 +1186,19 @@
     return { vx, x0 };
   }
 
+  // Instante en que el proyectil vuelve a h=0 (raíz positiva de at²+bt+c=0).
+  // Si no hay raíz positiva real (por ejemplo si el ajuste es raro), devuelve null.
+  function landingTime(a, b, c){
+    const disc = b*b - 4*a*c;
+    if (disc < 0) return null;
+    const sq = Math.sqrt(disc);
+    const r1 = (-b + sq) / (2*a);
+    const r2 = (-b - sq) / (2*a);
+    const positives = [r1, r2].filter(t => t > 0);
+    if (positives.length === 0) return null;
+    return Math.max(...positives);
+  }
+
   // Redondea a N cifras significativas, así el número se ve prolijo tanto si
   // es grande (c, en píxeles) como si es chico (a, la curvatura).
   function roundSig(n, sig){
@@ -1183,7 +1220,7 @@
     // gravedad); solo b (velocidad inicial) y c (altura inicial) se ajustan
     // a los datos detectados.
     const t0 = points[0].t;
-    const htPoints = points.map(p => ({ t: p.t - t0, yCm: p.yMath / currentPxPerCmY() }));
+    const htPoints = points.map(p => ({ t: p.t - t0, yCm: (currentOriginPxY() - p.yPixel) / currentPxPerCmY() }));
     fitResult = fitHeightVsTime(htPoints, GRAVITY);
     if (!fitResult){
       statusText.textContent = 'No se pudo ajustar la curva (muy pocos instantes distintos)';
@@ -1210,6 +1247,20 @@
     horizontalFit = fitLinear(ts, xsCm);
     curveT0 = t0;
     curveTs = ts;
+
+    // Velocidad inicial: combina la componente horizontal (vx, constante) y
+    // la vertical (b, la del ajuste) en el instante t=0.
+    const v0 = Math.sqrt(horizontalFit.vx**2 + b**2);
+    statV0.textContent = `${fmt(v0,3)} cm/s`;
+
+    // X final: dónde está el proyectil cuando vuelve a h=0 (alcance).
+    const tLand = landingTime(a, b, c);
+    if (tLand !== null){
+      const xFinalCm = horizontalFit.x0 + horizontalFit.vx * tLand;
+      statXFinal.textContent = `${fmt(xFinalCm,3)} cm (t=${fmt(tLand,3)}s)`;
+    } else {
+      statXFinal.textContent = '—';
+    }
 
     animateCurveDraw();
   }
@@ -1280,7 +1331,8 @@
       color: RUN_COLORS[savedRuns.length % RUN_COLORS.length],
       a, b, c, r2,
       tRangeMax: Math.max(...curveTs),
-      tMax, hMax
+      tMax, hMax,
+      ref: { scale: currentPxPerCmX(), scaleCustom: !!pxPerCm, originCustom: !!originPx }
     });
     saveRunBtn.textContent = 'Guardado ✓';
     setTimeout(() => { saveRunBtn.textContent = 'Guardar este tiro'; }, 1200);
@@ -1308,6 +1360,7 @@
         <div class="compare-item-text">
           <div class="compare-item-title">${r.label}</div>
           <div class="compare-item-eq">${eq}</div>
+          <div class="compare-item-eq">Ref: ${r.ref.scale.toFixed(2)} px/cm${r.ref.scaleCustom ? '' : ' (def.)'} · origen ${r.ref.originCustom ? 'marcado' : 'borde inferior'}</div>
         </div>
         <button class="compare-remove" data-idx="${i}" title="Quitar">✕</button>
       </div>`;
@@ -1400,6 +1453,8 @@
     statR2.textContent = '—';
     statVertex.textContent = '—';
     statA.textContent = '—';
+    statV0.textContent = '—';
+    statXFinal.textContent = '—';
     downloadBtn.disabled = true;
     saveRunBtn.disabled = true;
     trackBtn.disabled = true;
