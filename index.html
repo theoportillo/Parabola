@@ -307,6 +307,8 @@
   }
   .compare-remove:hover{color:var(--bird);}
 
+  .check-row{display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12px; color:var(--text-muted); cursor:pointer;}
+  .check-row input{accent-color:var(--curve);}
   input[type="range"]{
     width:100%;
     accent-color:var(--curve);
@@ -453,6 +455,7 @@
     <div>
       <div class="field-label"><span>Tolerancia de color</span><span id="sensVal">Media</span></div>
       <input type="range" id="sensSlider" min="1" max="10" value="5">
+      <label class="check-row"><input type="checkbox" id="showMaskChk"><span>Mostrar qué detecta (verde = elegido, rojo = parecido)</span></label>
     </div>
 
     <div class="divider"></div>
@@ -635,6 +638,10 @@
     const loop = () => {
       if (!liveMode || frozen || tracking) { livePreviewRAF = null; return; }
       drawVideoFrame();
+      if (showMask && targetColor){
+        detectColorCentroid({ source: video, wantMask: true });
+        paintMask();
+      }
       livePreviewRAF = requestAnimationFrame(loop);
     };
     livePreviewRAF = requestAnimationFrame(loop);
@@ -674,6 +681,12 @@
   const sensLabels = {1:'Muy baja',2:'Baja',3:'Baja',4:'Media-baja',5:'Media',6:'Media',7:'Media-alta',8:'Alta',9:'Alta',10:'Muy alta'};
   sensSlider.addEventListener('input', () => {
     sensVal.textContent = sensLabels[sensSlider.value];
+    if (showMask) previewDetection();
+  });
+  document.getElementById('showMaskChk').addEventListener('change', (e) => {
+    showMask = e.target.checked;
+    if (!displayCanvas.width || tracking) return;
+    if (showMask) previewDetection(); else redrawOverlays();
   });
 
   fileInput.addEventListener('change', (e) => {
@@ -728,6 +741,7 @@
     frozen = !frozen;
     freezeBtn.textContent = frozen ? 'Volver a vivo' : 'Congelar cuadro';
     if (frozen){
+      snapshotFrozen();
       stopLivePreviewLoop();
     } else {
       startLivePreviewLoop();
@@ -762,9 +776,13 @@
     }
     targetColor = { r: Math.round(r/n), g: Math.round(g/n), b: Math.round(b/n) };
     colorPickPx = { x: px, y: py };
+    computeRefArea(px, py);
     updateColorUI();
     redrawOverlays();
-    statusText.textContent = 'Color elegido — listo para rastrear';
+    if (showMask) previewDetection();
+    statusText.textContent = refArea
+      ? 'Color elegido — listo para rastrear'
+      : 'Color elegido, pero abarca mucho fondo: bajá la tolerancia o elegí otro punto';
     colorHint.classList.remove('show');
     trackBtn.disabled = false;
   }
@@ -917,7 +935,8 @@
 
   function drawVideoFrame(){
     dctx.clearRect(0,0,displayCanvas.width, displayCanvas.height);
-    dctx.drawImage(video, 0, 0, displayCanvas.width, displayCanvas.height);
+    const src = (liveMode && frozen && frozenCanvas.width) ? frozenCanvas : video;
+    dctx.drawImage(src, 0, 0, displayCanvas.width, displayCanvas.height);
   }
 
   function colorTolerance(){
@@ -926,64 +945,200 @@
     return 22 + s * 9; // rango aprox 31..112 (distancia RGB)
   }
 
-  function detectColorCentroid(){
-    if (!targetColor) return null;
-    actx.drawImage(video, 0, 0, ANALYSIS_W, analysisH);
-    const frame = actx.getImageData(0, 0, ANALYSIS_W, analysisH);
-    const d = frame.data;
-    const tol = colorTolerance();
-    const { r: tr, g: tg, b: tb } = targetColor;
-    const W = ANALYSIS_W, H = analysisH;
+  // ===== Detección por color: HSV + seguimiento local =====
+  // - Compara TONO y SATURACIÓN (no el RGB crudo), así la luz/sombra afecta menos
+  //   y una pared gris (poca saturación) no se confunde con el proyectil.
+  // - Filtra por tamaño (similar al del proyectil cuando se eligió el color).
+  // - Después de la primera detección busca solo cerca de donde se espera que esté.
+  let refArea = null;                 // área del proyectil (px de análisis) al elegir color
+  let lastA = null, prevA = null;     // últimas posiciones detectadas (px de análisis)
+  let gateMisses = 0, initialGate = null;
+  let showMask = false;
+  let lastMask = null, lastBest = null;
+  const maskCanvas = document.createElement('canvas');
+  const frozenCanvas = document.createElement('canvas');
 
-    // 1) Marcamos qué píxeles se parecen al color elegido
+  function snapshotFrozen(){
+    if (!video.videoWidth) return;
+    frozenCanvas.width = video.videoWidth;
+    frozenCanvas.height = video.videoHeight;
+    frozenCanvas.getContext('2d').drawImage(video, 0, 0);
+  }
+  function detectionSource(){ return (liveMode && frozen && frozenCanvas.width) ? frozenCanvas : video; }
+
+  function rgbToHsv(r, g, b){
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0;
+    if (d > 0){
+      if (mx === r) h = ((g - b) / d) % 6;
+      else if (mx === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60; if (h < 0) h += 360;
+    }
+    return { h, s: mx === 0 ? 0 : d / mx, v: mx };
+  }
+
+  function detectColorCentroid(opts){
+    opts = opts || {};
+    if (!targetColor) return null;
+    const W = ANALYSIS_W, H = analysisH;
+    actx.drawImage(opts.source || video, 0, 0, W, H);
+    const d = actx.getImageData(0, 0, W, H).data;
+
+    const th = rgbToHsv(targetColor.r, targetColor.g, targetColor.b);
+    const sens = parseInt(sensSlider.value, 10);
+    const colorful = th.s >= 0.22 && th.v >= 0.18;
+    const hueTol = 8 + sens * 3.5;
+    const sMin = Math.max(0.14, th.s * 0.5);
+    const vMin = Math.max(0.12, th.v * 0.45);
+    const rgbTol = colorTolerance();
+    const { r: tr, g: tg, b: tb } = targetColor;
+
+    // Ventana de búsqueda (si hay "gate", solo se mira cerca de donde se espera)
+    let x0 = 0, x1 = W - 1, y0 = 0, y1 = H - 1;
+    if (opts.gate){
+      x0 = Math.max(0, Math.floor(opts.gate.cx - opts.gate.r));
+      x1 = Math.min(W - 1, Math.ceil(opts.gate.cx + opts.gate.r));
+      y0 = Math.max(0, Math.floor(opts.gate.cy - opts.gate.r));
+      y1 = Math.min(H - 1, Math.ceil(opts.gate.cy + opts.gate.r));
+    }
+
     const matched = new Uint8Array(W * H);
-    for (let y = 0; y < H; y++){
-      for (let x = 0; x < W; x++){
+    for (let y = y0; y <= y1; y++){
+      for (let x = x0; x <= x1; x++){
         const i = (y * W + x) * 4;
         const r = d[i], g = d[i+1], b = d[i+2];
-        const dr = r - tr, dg = g - tg, db = b - tb;
-        if ((dr*dr + dg*dg + db*db) < tol*tol){
-          matched[y * W + x] = 1;
+        let ok = false;
+        if (colorful){
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          const v = mx / 255, sat = mx === 0 ? 0 : (mx - mn) / mx;
+          if (sat >= sMin && v >= vMin){
+            const rr = r / 255, gg = g / 255, bb = b / 255, dd = (mx - mn) / 255;
+            let h;
+            if (mx === r) h = ((gg - bb) / dd) % 6;
+            else if (mx === g) h = (bb - rr) / dd + 2;
+            else h = (rr - gg) / dd + 4;
+            h *= 60; if (h < 0) h += 360;
+            let dh = Math.abs(h - th.h); if (dh > 180) dh = 360 - dh;
+            ok = dh <= hueTol;
+          }
+        } else {
+          const dr = r - tr, dg = g - tg, db = b - tb;
+          ok = (dr*dr + dg*dg + db*db) < rgbTol * rgbTol;
         }
+        if (ok) matched[y * W + x] = 1;
       }
     }
 
-    // 2) En vez de promediar TODOS los píxeles parecidos (eso hace que ruido
-    // disperso en el fondo arrastre el punto hacia el centro), buscamos el
-    // grupo de píxeles conectados más grande — así ignoramos manchas sueltas
-    // de la pared o reflejos y nos quedamos con el objeto real.
+    // "Cierre" con dilatación de 1 px, solo para unir pedazos del mismo objeto
+    const dil = new Uint8Array(W * H);
+    for (let y = y0; y <= y1; y++){
+      for (let x = x0; x <= x1; x++){
+        const idx = y * W + x;
+        if (!matched[idx]) continue;
+        dil[idx] = 1;
+        if (x > 0) dil[idx - 1] = 1;
+        if (x < W - 1) dil[idx + 1] = 1;
+        if (y > 0) dil[idx - W] = 1;
+        if (y < H - 1) dil[idx + W] = 1;
+      }
+    }
+
+    // Grupos conectados: nos quedamos con el más grande que tenga tamaño razonable
+    const minArea = refArea && !opts.noSizeFilter ? Math.max(4, refArea * 0.2) : 4;
+    const maxArea = refArea && !opts.noSizeFilter ? refArea * 5 : Infinity;
     const visited = new Uint8Array(W * H);
     const stack = new Int32Array(W * H);
-    let bestCount = 0, bestSumX = 0, bestSumY = 0;
-
-    for (let y = 0; y < H; y++){
-      for (let x = 0; x < W; x++){
+    let bestCount = 0, bestSumX = 0, bestSumY = 0, bestStart = -1;
+    for (let y = y0; y <= y1; y++){
+      for (let x = x0; x <= x1; x++){
         const start = y * W + x;
-        if (!matched[start] || visited[start]) continue;
-
+        if (!dil[start] || visited[start]) continue;
         let count = 0, sumX = 0, sumY = 0, top = 0;
-        stack[top++] = start;
-        visited[start] = 1;
+        stack[top++] = start; visited[start] = 1;
         while (top > 0){
           const cur = stack[--top];
-          const cy = (cur / W) | 0;
-          const cx = cur - cy * W;
-          count++; sumX += cx; sumY += cy;
-          if (cx > 0){ const n = cur - 1; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
-          if (cx < W-1){ const n = cur + 1; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
-          if (cy > 0){ const n = cur - W; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
-          if (cy < H-1){ const n = cur + W; if (matched[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+          const cy = (cur / W) | 0, cx = cur - cy * W;
+          if (matched[cur]){ count++; sumX += cx; sumY += cy; }
+          if (cx > 0){ const n = cur - 1; if (dil[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+          if (cx < W-1){ const n = cur + 1; if (dil[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+          if (cy > 0){ const n = cur - W; if (dil[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
+          if (cy < H-1){ const n = cur + W; if (dil[n] && !visited[n]){ visited[n]=1; stack[top++]=n; } }
         }
-        if (count > bestCount){ bestCount = count; bestSumX = sumX; bestSumY = sumY; }
+        if (count >= minArea && count <= maxArea && count > bestCount){
+          bestCount = count; bestSumX = sumX; bestSumY = sumY; bestStart = start;
+        }
       }
     }
 
-    if (bestCount < 6) return null; // el grupo más grande es demasiado chico, probablemente ruido
+    // Máscara para el modo "mostrar qué detecta"
+    if (opts.wantMask || showMask){
+      lastMask = matched;
+      lastBest = new Uint8Array(W * H);
+      if (bestStart >= 0){
+        const seen = new Uint8Array(W * H);
+        let top = 0; stack[top++] = bestStart; seen[bestStart] = 1;
+        while (top > 0){
+          const cur = stack[--top];
+          const cy = (cur / W) | 0, cx = cur - cy * W;
+          if (matched[cur]) lastBest[cur] = 1;
+          if (cx > 0){ const n = cur - 1; if (dil[n] && !seen[n]){ seen[n]=1; stack[top++]=n; } }
+          if (cx < W-1){ const n = cur + 1; if (dil[n] && !seen[n]){ seen[n]=1; stack[top++]=n; } }
+          if (cy > 0){ const n = cur - W; if (dil[n] && !seen[n]){ seen[n]=1; stack[top++]=n; } }
+          if (cy < H-1){ const n = cur + W; if (dil[n] && !seen[n]){ seen[n]=1; stack[top++]=n; } }
+        }
+      }
+    }
+
+    if (bestStart < 0) return null;
+    const ax = bestSumX / bestCount, ay = bestSumY / bestCount;
     return {
-      x: (bestSumX / bestCount) * (displayCanvas.width / W),
-      y: (bestSumY / bestCount) * (displayCanvas.height / H),
+      x: ax * (displayCanvas.width / W),
+      y: ay * (displayCanvas.height / H),
+      ax, ay,
       count: bestCount
     };
+  }
+
+  function paintMask(){
+    if (!showMask || !lastMask) return;
+    const W = ANALYSIS_W, H = analysisH;
+    maskCanvas.width = W; maskCanvas.height = H;
+    const mctx = maskCanvas.getContext('2d');
+    const img = mctx.createImageData(W, H);
+    for (let i = 0; i < W * H; i++){
+      if (lastBest && lastBest[i]){
+        img.data[i*4] = 94; img.data[i*4+1] = 234; img.data[i*4+2] = 212; img.data[i*4+3] = 235;
+      } else if (lastMask[i]){
+        img.data[i*4] = 232; img.data[i*4+1] = 64; img.data[i*4+2] = 44; img.data[i*4+3] = 160;
+      }
+    }
+    mctx.putImageData(img, 0, 0);
+    dctx.save();
+    dctx.imageSmoothingEnabled = false;
+    dctx.drawImage(maskCanvas, 0, 0, displayCanvas.width, displayCanvas.height);
+    dctx.restore();
+  }
+
+  // Prueba la detección sobre el cuadro actual (sin rastrear)
+  function previewDetection(){
+    if (tracking || !targetColor || !displayCanvas.width) return;
+    redrawOverlays();
+    if (!showMask) return;
+    detectColorCentroid({ source: detectionSource(), wantMask: true });
+    paintMask();
+  }
+
+  // Calcula el tamaño del proyectil en el punto tocado (para filtrar por tamaño)
+  function computeRefArea(px, py){
+    const W = ANALYSIS_W, H = analysisH;
+    const g = { cx: px * W / displayCanvas.width, cy: py * H / displayCanvas.height, r: 14 };
+    const prev = refArea; refArea = null;
+    const det = detectColorCentroid({ source: detectionSource(), gate: g, noSizeFilter: true });
+    refArea = det ? det.count : null;
+    if (refArea && refArea > W * H * 0.2){ refArea = null; } // el color abarca demasiado fondo
+    return prev;
   }
 
   trackBtn.addEventListener('click', () => {
@@ -992,6 +1147,10 @@
     points = [];
     fitResult = null;
     missCounter = 0;
+    lastA = null; prevA = null; gateMisses = 0;
+    initialGate = (!liveMode && colorPickPx)
+      ? { cx: colorPickPx.x * ANALYSIS_W / displayCanvas.width, cy: colorPickPx.y * analysisH / displayCanvas.height, r: 30 }
+      : null;
     eqText.classList.remove('show');
     downloadBtn.disabled = true;
     saveRunBtn.disabled = true;
@@ -1021,7 +1180,25 @@
         return;
       }
       drawVideoFrame();
-      const detection = detectColorCentroid();
+      // Ventana de búsqueda: cerca de donde se espera el proyectil (posición
+      // anterior + velocidad). Si se pierde por varios cuadros, vuelve a buscar en todo el cuadro.
+      let gate = null;
+      if (lastA && gateMisses <= 8){
+        const vx = prevA ? lastA.x - prevA.x : 0, vy = prevA ? lastA.y - prevA.y : 0;
+        const speed = Math.hypot(vx, vy);
+        gate = { cx: lastA.x + vx, cy: lastA.y + vy, r: Math.max(22, 2.5 * speed + 12) * (1 + 0.4 * gateMisses) };
+      } else if (!lastA && initialGate && gateMisses <= 8){
+        gate = initialGate;
+      }
+      const detection = detectColorCentroid({ gate });
+      if (detection){
+        prevA = (gateMisses > 8) ? null : lastA;
+        lastA = { x: detection.ax, y: detection.ay };
+        gateMisses = 0;
+      } else {
+        gateMisses++;
+      }
+      if (showMask) paintMask();
       if (detection){
         const yPixel = detection.y;
         const yMath = currentOriginPxY() - yPixel;
@@ -1093,6 +1270,7 @@
     if (liveMode){
       stopLiveBtn.style.display = 'none';
       liveControlsRow.style.display = 'flex';
+      snapshotFrozen();
       frozen = true; // se queda mostrando el resultado; "Volver a vivo" lo retoma
       freezeBtn.textContent = 'Volver a vivo';
       stopLivePreviewLoop();
